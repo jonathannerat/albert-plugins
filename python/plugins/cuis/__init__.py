@@ -14,8 +14,9 @@ md_license = "MIT"
 
 HOME_DIR = os.environ["HOME"]
 CUIS_DIR = HOME_DIR + "/files/cuis-university"
+OPEN_IMAGE_SCRIPT = CUIS_DIR + "/open-image"
 CUIS_IMAGES_DIR = CUIS_DIR + "/images"
-ICON = "/home/jt/files/cuis-university/favicon.ico"
+ICON = ["/home/jt/files/cuis-university/favicon.ico"]
 IMAGE_EXT = ".image"
 
 
@@ -36,45 +37,65 @@ class Plugin(QueryHandler):
         return "cuis "
 
     def handleQuery(self, query):
-        results = []
         search: str = query.string.strip().lower()
+        results = [self.itemForImage(i) for i in self.cuisImagesMatching(search)]
 
-        for image in self.getCuisImagesFromQuery(search):
-            results.append(self.itemForImage(image))
+        if len(results):
+            query.add(results)
+        else:
+            query.add(self.createImageItem(query.string.strip()))
 
-        query.add(results)
-
-    def getCuisImagesFromQuery(self, search: str) -> list[str]:
-        pat = "*" + IMAGE_EXT
+    def cuisImagesMatching(self, search: str) -> list[str]:
+        image_pattern = "*" + IMAGE_EXT
         images: list[str] = []
 
-        for root, _, paths in os.walk(CUIS_IMAGES_DIR):
-            for image in fnmatch.filter(paths, pat):
-                filename  = self.filenameWithoutExtension(image)
-                if search in filename.lower():
+        for root, _, filenames in os.walk(CUIS_IMAGES_DIR):
+            for filename in fnmatch.filter(filenames, image_pattern):
+                filename_noext = self.filenameWithoutExtension(filename)
+                if search in filename_noext.lower():
                     images.append(os.path.join(root, filename))
 
-        return sorted(images, key=lambda s: s.lower())
+        images.sort()
 
-    def itemForImage(self, image):
-        name = self.filenameWithoutExtension(image)
+        return images
+
+    def itemForImage(self, image_path: str):
+        relative_filename_noext = self.filenameWithoutExtension(
+            image_path[len(CUIS_IMAGES_DIR) + 1 :]
+        )
 
         return Item(
-            id=name,
+            id=relative_filename_noext,
             icon=ICON,
-            text=name,
-            subtext=image,
-            completion="cuis " + name,
+            text=relative_filename_noext,
+            subtext=image_path,
+            completion="cuis " + relative_filename_noext,
             actions=[
                 Action(
                     "open",
                     "Open",
-                    lambda: runDetachedProcess(
-                        [f"{CUIS_DIR}/xdg-open.sh", image[len(CUIS_DIR) + 1 :]]
-                    ),
+                    lambda: runDetachedProcess([OPEN_IMAGE_SCRIPT, image_path]),
                 )
             ],
         )
 
-    def filenameWithoutExtension(self, image: str):
-        return image[len(CUIS_IMAGES_DIR) + 1 : -len(IMAGE_EXT)]
+    def createImageItem(self, name: str):
+        image_path = os.path.join(CUIS_IMAGES_DIR, name + IMAGE_EXT)
+
+        return Item(
+            id="new-image",
+            icon=ICON,
+            text=name,
+            subtext=image_path,
+            completion="cuis " + name,
+            actions=[
+                Action(
+                    "create",
+                    "Create CUIS Image",
+                    lambda: runDetachedProcess([OPEN_IMAGE_SCRIPT, image_path]),
+                )
+            ],
+        )
+
+    def filenameWithoutExtension(self, path: str):
+        return path[: -len(IMAGE_EXT)]

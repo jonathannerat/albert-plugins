@@ -3,8 +3,15 @@
 import os
 import csv
 import dataclasses
-from typing import Callable
-from albert import *
+import re
+from albert import (
+    QueryHandler,
+    Action,
+    Item,
+    openUrl,
+    setClipboardText,
+    sendTrayNotification,
+)
 
 md_iid = "0.5"
 md_version = "0.1"
@@ -18,23 +25,25 @@ BOOKMARKS_CSV = os.environ["HOME"] + "/notebook/bookmarks.csv"
 ICON = ["/usr/share/icons/Papirus-Dark/16x16/actions/bookmarks.svg"]
 
 
-@dataclasses.dataclass(init=False)
+@dataclasses.dataclass()
 class Bookmark:
     id: str
     name: str
     url: str
-    tags: list[str]
+    tags: str
     desc: str
 
-    def __init__(self, row: list[str]) -> None:
-        self.id = row[0]
-        self.name = row[1]
-        self.url = row[2]
-        self.desc = row[4]
-        self.tags = row[3].split(",")
+    def matches(self, search: str):
+        if search in self.name.lower():
+            return True
 
+        if search in self.url.lower():
+            return True
 
-QueryFilter = Callable[[Bookmark], bool]
+        if search in self.tags.lower():
+            return True
+
+        return False
 
 
 class Plugin(QueryHandler):
@@ -54,30 +63,25 @@ class Plugin(QueryHandler):
         return "bm "
 
     def handleQuery(self, query):
-        search = query.string.strip().lower()
-        query_filter: QueryFilter = (
-            lambda bm: search in (bm.name + bm.url + bm.desc).lower()
-        )
-        results: list[Item] = []
+        search: str = query.string.strip()
+        results = [self.itemForBookmark(b) for b in self.bookmarksMatching(search)]
 
-        for bm in self.getBookmarks(query_filter if search else None):
-            results.append(
+        if len(results) > 0:
+            query.add(results)
+        elif re.match("^https?://", search) is not None:
+            query.add(
                 Item(
-                    id=bm.id,
                     icon=ICON,
-                    text=bm.name,
-                    subtext=bm.url,
-                    completion=f"bookmark {bm.url}",
+                    text="Create bookmark",
+                    subtext=search,
+                    completion=f"bm {search}",
                     actions=[
-                        Action("open", "Open URL", lambda: openUrl(bm.url)),
-                        Action("copy", "Copy URL", lambda: setClipboardText(bm.url)),
+                        Action("create", "Create Bookmark", lambda: openUrl(search)),
                     ],
                 )
             )
 
-        query.add(results)
-
-    def getBookmarks(self, query_filter: QueryFilter | None) -> list[Bookmark]:
+    def bookmarksMatching(self, search: str) -> list[Bookmark]:
         results = []
 
         with open(BOOKMARKS_CSV, "r") as bmfile:
@@ -89,9 +93,22 @@ class Plugin(QueryHandler):
                     skip_header = False
                     continue
 
-                bm = Bookmark(row)
+                bm = Bookmark(*row)
 
-                if query_filter is None or query_filter(bm):
+                if bm.matches(search.lower()):
                     results.append(bm)
 
         return results
+
+    def itemForBookmark(self, bm: Bookmark):
+        return Item(
+            id=bm.id,
+            icon=ICON,
+            text=bm.name,
+            subtext=bm.url,
+            completion=f"bm {bm.url}",
+            actions=[
+                Action("open", "Open URL", lambda: openUrl(bm.url)),
+                Action("copy", "Copy URL", lambda: setClipboardText(bm.url)),
+            ],
+        )
